@@ -1,0 +1,7 @@
+
+build
+jwt
+pytest
+requests
+twine
+cloud_foundry

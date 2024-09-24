@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simple-oauth-server"
+version = "0.0.1"
+authors = [
+    { name="Daniel Repik", email="danrepik@icloud.com" },
+]
+description = "Provides a simple OAuth server deployed as an AWS Lambda function, intended to support development with Localstack"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3.9",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pulumi",
+    "pulumi-aws",
+    "pkg-resources",
+    "cloud_foundry"
+]
+
+[project.urls]
+"Documentation" = "https://github.com/DanRepik/blueprints"
+"Source" = "https://github.com/DanRepik/blueprints"
+
+[tool.hatch.build.targets.sdist]
+include = ["simple_oath_server"]
+
+[tool.hatch.build.targets.wheel]
+include = ["simple_oath_server"]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: marks tests as unit tests that do not require a database",
+    "integration: marks tests that operate on a real database",
+]

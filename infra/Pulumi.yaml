@@ -1,0 +1,11 @@
+name: auth0-server
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+description: Test server deployment
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-python

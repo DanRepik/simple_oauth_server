@@ -1,0 +1,120 @@
+openapi: 3.0.0
+info:
+  title: Mock Auth0 Token API
+  description: API to generate and validate Auth0-like tokens
+  version: 1.0.0
+paths:
+  /token:
+    post:
+      summary: Generate a mock Auth0 token
+      operationId: generateToken
+      description: Generate a JWT token based on the client ID and client secret.
+      requestBody:
+        description: Client credentials and audience for generating the token.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                  description: The client ID used to identify the client.
+                client_secret:
+                  type: string
+                  description: The client secret for the client.
+                audience:
+                  type: string
+                  description: The intended audience for the token.
+                grant_type:
+                  type: string
+                  enum: [client_credentials]
+                  description: The type of grant being requested. Must be "client_credentials".
+              required:
+                - client_id
+                - client_secret
+                - audience
+                - grant_type
+      responses:
+        '200':
+          description: A successful response with the generated JWT token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: The JWT access token.
+                  token_type:
+                    type: string
+                    description: The type of token. Typically "Bearer".
+                  expires_in:
+                    type: integer
+                    description: The expiration time of the token in seconds.
+                example:
+                  access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  token_type: Bearer
+                  expires_in: 86400
+        '400':
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error code indicating the type of failure.
+                  error_description:
+                    type: string
+                    description: Detailed error message.
+              example:
+                error: invalid_request
+                error_description: Missing or invalid parameters
+        '401':
+          description: Invalid client credentials or audience.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error code indicating the type of failure.
+                  error_description:
+                    type: string
+                    description: Detailed error message.
+              example:
+                error: invalid_client
+                error_description: Client ID not found
+
+  /token/validate:
+    post:
+      summary: Validate an Auth0-like JWT token
+      operationId: validateToken
+      description: Validate the provided JWT token and return a policy document if valid.
+      requestBody:
+        description: Token validation request body.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: The JWT token to be validated.
+              required:
+                - token
+      responses:
+        '200':
+          description: A successful response indicating the token is valid, along with a policy document.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  principalId:
+                    type: string
+                    description: The 
