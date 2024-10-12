@@ -3,6 +3,7 @@ build
 pytest
 requests
 twine
+cryptography
 
 cloud_foundry
 PyJWT

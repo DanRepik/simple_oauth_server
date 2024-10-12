@@ -5,25 +5,25 @@ import logging
 import cloud_foundry
 from cloud_foundry import python_function, Function
 from simple_oauth_server.openapi_editor import OpenAPISpecEditor
+from simple_oauth_server.asymmetric_key_pair import AsymmetricKeyPair
 
 log = logging.Logger(__name__, os.environ.get("LOGGING_LEVEL", logging.DEBUG))
         
+asymmetic_key_pair = AsymmetricKeyPair()
+
 def validator() -> Function:
     return python_function(
         "validator",
         timeout=12,
         memory_size=128,
-        environment={
-            "AUTH0_DOMAIN": "auth0_domain",
-            "AUDIENCE": "auth0_audience",
-            "LOGGING_LEVEL": "DEBUG",
-        },
         sources={
             "app.py": pkgutil.get_data("simple_oauth_server", "token_validator.py").decode("utf-8"),  # type: ignore
+            "public_key.pem": asymmetic_key_pair.public_key_pem
         },
         requirements=[
             "requests==2.27.1",
             "PyJWT",
+            "cryptography"
         ],
     )
 
@@ -33,12 +33,14 @@ def authorizer(config_loc: str) -> Function:
         timeout=12,
         sources={
             "app.py": pkgutil.get_data("simple_oauth_server", "token_authorizer.py").decode("utf-8"),
-            "config.yaml": config_loc
+            "config.yaml": config_loc,
+            "private_key.pem": asymmetic_key_pair.private_key_pem
         },
         requirements=[
             "PyJWT",
             "requests==2.27.1",
-            "PyYAML"
+            "PyYAML",
+            "cryptography"
         ],
     )
 

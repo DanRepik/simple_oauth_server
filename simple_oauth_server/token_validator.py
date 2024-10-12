@@ -3,7 +3,8 @@
 import os
 import json
 import re
-from jwt import PyJWKClient, decode, get_unverified_header, InvalidTokenError
+import jwt
+from cryptography.hazmat.primitives import serialization
 import logging
 
 logging.basicConfig(
@@ -17,7 +18,6 @@ log.setLevel(os.environ.get("LOGGING_LEVEL", "DEBUG"))
 # Load environment variables
 AUTH_MAPPINGS = json.loads(os.getenv("AUTH0_AUTH_MAPPINGS", "{}"))
 DEFAULT_ARN = "arn:aws:execute-api:*:*:*/*/*"
-DECODE_OPTIONS = {"verify_signature": True, "verify_aud": False}
 
 
 def handler(event, context):
@@ -25,14 +25,30 @@ def handler(event, context):
     log.info(event)
     try:
         token = parse_token_from_event(check_event_for_error(event))
+        decoded_token = decode_token(event, token)
         return get_policy(
             build_policy_resource_base(event),
-            validate_token(token),
+            decoded_token,
             "sec-websocket-protocol" in event["headers"],
         )
+    except jwt.InvalidTokenError as e:
+        log.error(f"Token validation failed: {e}")
+        return {
+            "statusCode": 401,
+            "body": json.dumps({
+                "message": "Unauthorized",
+                "error": str(e)
+            })
+        }
     except Exception as e:
-        log.error(e)
-        raise Exception("Unauthorized")
+        log.error(f"Authorization error: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "message": "Internal Server Error",
+                "error": str(e)
+            })
+        }
 
 
 def check_event_for_error(event: dict) -> dict:
@@ -70,6 +86,7 @@ def parse_token_from_event(event: dict) -> str:
         or not auth_token_parts[1]
     ):
         raise Exception("Invalid AuthorizationToken.")
+    log.info(f"token: {auth_token_parts[1]}")
     return auth_token_parts[1]
 
 
@@ -90,24 +107,35 @@ def build_policy_resource_base(event: dict) -> str:
     return ":".join(arn_pieces)
 
 
-def validate_token(token: str) -> dict:
-    """Validate and decode the JWT token using Auth0 JWKS."""
-    header = get_unverified_header(token)
-    log.info(f"header: {header}")
-    if "kid" not in header:
-        raise InvalidTokenError("No kid found in token header.")
+def decode_token(event, token: str) -> dict:
+    """
+    Validate and decode the JWT token using the public key from the PEM file.
+    """
+    log.info("decode_token")
+    # Load the public key from the PEM file
+    with open("public_key.pem", "rb") as pem_file:
+        public_key = serialization.load_pem_public_key(pem_file.read())
 
-    jwks_url = f"{os.getenv('AUTH0_DOMAIN')}/.well-known/jwks.json"
-    key = PyJWKClient(jwks_url).get_signing_key(header["kid"]).key
-
-    return decode(
-        token,
-        key,
-        algorithms=[header.get("alg", "RS256")],
-        issuer=f'{os.getenv("AUTH0_DOMAIN")}/',
-        audience=os.getenv("AUDIENCE"),
-        options=DECODE_OPTIONS,
-    )
+    log.info(f"public_key: {public_key}")
+    log.info(f"method_arn: {event['methodArn']}")
+    audience = event["methodArn"].rstrip("/").split(":")[-1].split("/")[1]
+    log.info(f"audience: {audience}")
+    try:
+        # Decode and verify the JWT token
+        decoded_token = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            audience=audience,
+            issuer=os.getenv("ISSUER"),
+        )
+        return decoded_token
+    except jwt.ExpiredSignatureError:
+        log.error("Token has expired.")
+        raise jwt.InvalidTokenError("Token has expired.")
+    except jwt.InvalidTokenError as e:
+        log.error(f"Token validation failed: {e}")
+        raise
 
 
 def get_policy(policy_resource_base: str, decoded: dict, is_ws: bool) -> dict:
@@ -153,5 +181,3 @@ def create_statement(effect: str, resource: list, action: list) -> dict:
         "Resource": resource,
         "Action": action,
     }
-
-

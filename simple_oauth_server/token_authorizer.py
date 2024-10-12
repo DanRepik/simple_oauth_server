@@ -1,9 +1,7 @@
 # token_authorizer.py
-
 import json
 import jwt
 import os
-import sys
 import datetime
 import yaml
 import logging
@@ -96,10 +94,10 @@ def handler(event, context):
             ),
         }
 
-    # Generate the mock token using the client-specific data from the YAML
+    # Generate the token using the client-specific data from the YAML
     try:
-        secret_key = "your-mock-secret"
-
+        # Use an RSA private key if using RS256
+        private_key = open("private_key.pem", "r").read()
         now = datetime.datetime.utcnow()
 
         # Prepare the payload using values from the client_data
@@ -113,9 +111,11 @@ def handler(event, context):
             "permissions": client_data["permissions"],
         }
 
+        # Define JWT headers with kid
+        headers = {"kid": "your-key-id"}
+
         # Generate the JWT token
-        log.info(f"payload: {payload}")
-        token = jwt.encode(payload, secret_key, algorithm="HS256")
+        token = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
         log.info("Token generated successfully")
     except Exception as e:
         log.error(f"Failed to generate token: {e}")
@@ -124,7 +124,7 @@ def handler(event, context):
             "body": json.dumps({"error": "Internal Server Error"}),
         }
 
-    # Return the token in the response, similar to Auth0's response format
+    # Return the token in the response
     return {
         "statusCode": 200,
         "body": json.dumps(
