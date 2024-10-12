@@ -1,4 +1,4 @@
-name: auth0-server
+name: simple-oauth-server
 runtime:
   name: python
   options:

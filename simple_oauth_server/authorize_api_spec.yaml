@@ -88,33 +88,3 @@ paths:
               example:
                 error: invalid_client
                 error_description: Client ID not found
-
-  /token/validate:
-    post:
-      summary: Validate an Auth0-like JWT token
-      operationId: validateToken
-      description: Validate the provided JWT token and return a policy document if valid.
-      requestBody:
-        description: Token validation request body.
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                token:
-                  type: string
-                  description: The JWT token to be validated.
-              required:
-                - token
-      responses:
-        '200':
-          description: A successful response indicating the token is valid, along with a policy document.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  principalId:
-                    type: string
-                    description: The 

@@ -4,18 +4,25 @@ import os
 import json
 import re
 from jwt import PyJWKClient, decode, get_unverified_header, InvalidTokenError
-from logging import Logger
+import logging
 
-logger = Logger(__name__)
+logging.basicConfig(
+    format="%(levelname)s \t %(filename)s:%(lineno)d:%(funcName)s \t %(message)s",
+    level=os.environ.get("LOGGING_LEVEL", "DEBUG"),
+)
+
+log = logging.getLogger(__name__)
+log.setLevel(os.environ.get("LOGGING_LEVEL", "DEBUG"))
 
 # Load environment variables
 AUTH_MAPPINGS = json.loads(os.getenv("AUTH0_AUTH_MAPPINGS", "{}"))
 DEFAULT_ARN = "arn:aws:execute-api:*:*:*/*/*"
 DECODE_OPTIONS = {"verify_signature": True, "verify_aud": False}
 
+
 def handler(event, context):
     """Main Lambda handler."""
-    logger.info(event)
+    log.info(event)
     try:
         token = parse_token_from_event(check_event_for_error(event))
         return get_policy(
@@ -24,7 +31,7 @@ def handler(event, context):
             "sec-websocket-protocol" in event["headers"],
         )
     except Exception as e:
-        logger.error(e)
+        log.error(e)
         raise Exception("Unauthorized")
 
 
@@ -39,7 +46,9 @@ def check_event_for_error(event: dict) -> dict:
     # Check if it's a REST request (type TOKEN)
     if event.get("type") == "TOKEN":
         if "methodArn" not in event or "authorizationToken" not in event:
-            raise Exception('Missing required fields: "methodArn" or "authorizationToken".')
+            raise Exception(
+                'Missing required fields: "methodArn" or "authorizationToken".'
+            )
     # Check if it's a WebSocket request
     elif "sec-websocket-protocol" in event["headers"]:
         protocols = event["headers"]["sec-websocket-protocol"].split(", ")
@@ -55,7 +64,11 @@ def check_event_for_error(event: dict) -> dict:
 def parse_token_from_event(event: dict) -> str:
     """Extract the Bearer token from the authorization header."""
     auth_token_parts = event["authorizationToken"].split(" ")
-    if len(auth_token_parts) != 2 or auth_token_parts[0].lower() != "bearer" or not auth_token_parts[1]:
+    if (
+        len(auth_token_parts) != 2
+        or auth_token_parts[0].lower() != "bearer"
+        or not auth_token_parts[1]
+    ):
         raise Exception("Invalid AuthorizationToken.")
     return auth_token_parts[1]
 
@@ -65,7 +78,7 @@ def build_policy_resource_base(event: dict) -> str:
     if not AUTH_MAPPINGS:
         return DEFAULT_ARN
 
-    method_arn = str(event["methodArn"]).rstrip('/')
+    method_arn = str(event["methodArn"]).rstrip("/")
     slice_where = -2 if event.get("type") == "TOKEN" else -1
     arn_pieces = re.split(":|/", method_arn)[:slice_where]
 
@@ -80,6 +93,7 @@ def build_policy_resource_base(event: dict) -> str:
 def validate_token(token: str) -> dict:
     """Validate and decode the JWT token using Auth0 JWKS."""
     header = get_unverified_header(token)
+    log.info(f"header: {header}")
     if "kid" not in header:
         raise InvalidTokenError("No kid found in token header.")
 
@@ -117,16 +131,19 @@ def get_policy(policy_resource_base: str, decoded: dict, is_ws: bool) -> dict:
         "scope": decoded.get("scope"),
         "permissions": json.dumps(decoded.get("permissions", [])),
     }
-    logger.info(f"context: {json.dumps(context)}")
+    log.info(f"context: {json.dumps(context)}")
 
     if policy_resource_base == DEFAULT_ARN:
         resources = [DEFAULT_ARN]
 
-    return create_policy(
-        decoded["sub"],
-        [create_statement("Allow", resources, [default_action])],
-        context,
-    )
+    return {
+        "principalId": decoded["sub"],
+        "policyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [create_statement("Allow", resources, [default_action])],
+        },
+        "context": context,
+    }
 
 
 def create_statement(effect: str, resource: list, action: list) -> dict:
@@ -138,13 +155,3 @@ def create_statement(effect: str, resource: list, action: list) -> dict:
     }
 
 
-def create_policy(principal_id: str, statements: list, context: dict) -> dict:
-    """Create the policy document."""
-    return {
-        "principalId": principal_id,
-        "policyDocument": {
-            "Version": "2012-10-17",
-            "Statement": statements,
-        },
-        "context": context,
-    }

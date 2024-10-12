@@ -1,0 +1,35 @@
+openapi: 3.0.0
+info:
+  title: Mock Auth0 Token API
+  description: API to generate and validate Auth0-like tokens
+  version: 1.0.0
+paths:
+  /token/validate:
+    post:
+      summary: Validate an Auth0-like JWT token
+      operationId: validateToken
+      description: Validate the provided JWT token and return a policy document if valid.
+      requestBody:
+        description: Token validation request body.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: The JWT token to be validated.
+              required:
+                - token
+      responses:
+        '200':
+          description: A successful response indicating the token is valid, along with a policy document.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  principalId:
+                    type: string
+                    description: The 

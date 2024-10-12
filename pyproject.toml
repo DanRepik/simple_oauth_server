@@ -17,8 +17,7 @@ classifiers = [
 dependencies = [
     "pulumi",
     "pulumi-aws",
-    "pkg-resources",
-    "cloud_foundry"
+    "cloud-foundry"
 ]
 
 [project.urls]
@@ -26,10 +25,10 @@ dependencies = [
 "Source" = "https://github.com/DanRepik/blueprints"
 
 [tool.hatch.build.targets.sdist]
-include = ["simple_oath_server"]
+include = ["simple_oauth_server"]
 
 [tool.hatch.build.targets.wheel]
-include = ["simple_oath_server"]
+include = ["simple_oauth_server"]
 
 [tool.pytest.ini_options]
 markers = [

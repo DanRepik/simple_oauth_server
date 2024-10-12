@@ -3,7 +3,7 @@ import os
 import json
 from unittest.mock import patch, MagicMock
 from jwt import InvalidTokenError
-from simple_oath_server.token_validator import handler, check_event_for_error, parse_token_from_event, build_policy_resource_base, validate_token, get_policy, create_policy, create_statement
+from simple_oauth_server.token_validator import handler, check_event_for_error, parse_token_from_event, build_policy_resource_base, validate_token, get_policy, create_policy, create_statement
 
 # Mock environment variables
 @pytest.fixture(autouse=True)

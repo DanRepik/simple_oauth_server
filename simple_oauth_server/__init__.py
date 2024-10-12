@@ -1,78 +1,63 @@
+import pulumi
 import pkgutil
+import os
+import logging
 import cloud_foundry
-from openapi_editor import OpenAPISpecParser
+from cloud_foundry import python_function, Function
+from simple_oauth_server.openapi_editor import OpenAPISpecEditor
 
-
-def run(auth0_domain: str = "auth0_domain", auth0_audience: str = "auth0_audience"):
-
-    validator = cloud_foundry.python_function(
+log = logging.Logger(__name__, os.environ.get("LOGGING_LEVEL", logging.DEBUG))
+        
+def validator() -> Function:
+    return python_function(
         "validator",
         timeout=12,
         memory_size=128,
         environment={
-            "AUTH0_DOMAIN": auth0_domain,
-            "AUDIENCE": auth0_audience,
+            "AUTH0_DOMAIN": "auth0_domain",
+            "AUDIENCE": "auth0_audience",
             "LOGGING_LEVEL": "DEBUG",
         },
         sources={
-            "app.py": pkgutil.get_data("simple_oath_server", "token_validator.py").decode("utf-8"),  # type: ignore
+            "app.py": pkgutil.get_data("simple_oauth_server", "token_validator.py").decode("utf-8"),  # type: ignore
         },
         requirements=[
-            "jsonschema==4.4.0",
-            "moto==3.1.6",
-            "pytest==7.1.1",
             "requests==2.27.1",
+            "PyJWT",
         ],
     )
 
-    authorizer = cloud_foundry.python_function(
+def authorizer(config_loc: str) -> Function:
+    return cloud_foundry.python_function(
         "authorizer",
         timeout=12,
         sources={
-            "app.py": pkgutil.get_data("simple_oath_server", "token_authorizer.py").decode("utf-8"),  # type: ignore
+            "app.py": pkgutil.get_data("simple_oauth_server", "token_authorizer.py").decode("utf-8"),
+            "config.yaml": config_loc
         },
         requirements=[
-            "jwt",
+            "PyJWT",
             "requests==2.27.1",
+            "PyYAML"
         ],
     )
 
+
+def run(config_loc: str):
+
+    log.info(f"config_loc: {config_loc}")
+                        
     cloud_foundry.rest_api(
         "rest-api",
-        body=OpenAPISpecParser(
-            pkgutil.get_data("simple_oath_server", "api_spec.yaml").decode("utf-8")
-        )
-        .add_operation_attribute(
-            path="/token",
-            method="post",
-            attibute="x-function-name",
-            value=authorizer.name,
-        )
-        .add_operation_attribute(
-            path="/token",
-            method="post",
-            attribute="x-amazon-apigateway-integration",
-            value={
-                "type": "aws_proxy",
-                "uri": authorizer.invoke_arn,
-                "httpMethod": "POST",
-            },
-        )
-        .add_operation_attribute(
-            path="/token/validate",
-            method="post",
-            attibute="x-function-name",
-            value=validator.function_name,
-        )
-        .add_operation_attribute(
-            path="/token/validate",
-            method="post",
-            attribute="x-amazon-apigateway-integration",
-            value={
-                "type": "aws_proxy",
-                "uri": validator.invoke_arn,
-                "httpMethod": "POST",
-            },
-        )
-        .to_yaml(),
+        body=[
+            pkgutil.get_data("simple_oauth_server", "authorize_api_spec.yaml").decode("utf-8"),
+            pkgutil.get_data("simple_oauth_server", "validate_api_spec.yaml").decode("utf-8"),
+        ],
+        integrations=[
+            { "path":"/token", "method":"post", "function":authorizer(config_loc)},
+            { "path":"/token/validate", "method":"post", "function":validator()}
+        ],
     )
+
+    
+    

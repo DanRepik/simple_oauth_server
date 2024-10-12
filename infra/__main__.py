@@ -1,5 +1,7 @@
-import simple_oath_server
+# __main.py__
 
-auth0_server = simple_oath_server.run()
+import simple_oauth_server
+
+oauth_server = simple_oauth_server.run(config_loc = "./config.yaml")
 
 
