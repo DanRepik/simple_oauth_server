@@ -10,26 +10,65 @@ authors = [
 ]
 description = "Provides a simple OAuth server deployed as an AWS Lambda function, intended to support development with Localstack"
 requires-python = ">=3.9"
+readme = "README.md"
 classifiers = [
     "Programming Language :: Python :: 3.9",
     "Operating System :: OS Independent",
 ]
 dependencies = [
     "cryptography",
+    "PyJWT",
     "pulumi",
     "pulumi-aws",
-    "cloud-foundry"
+    "cloud-foundry",
 ]
 
 [project.urls]
 "Documentation" = "https://github.com/DanRepik/blueprints"
 "Source" = "https://github.com/DanRepik/blueprints"
 
+[tool.hatch.build]
+only-packages = true
+
 [tool.hatch.build.targets.sdist]
-include = ["simple_oauth_server"]
+include = [
+    "simple_oauth_server",
+    "README.md",
+    "LICENSE",
+]
 
 [tool.hatch.build.targets.wheel]
-include = ["simple_oauth_server"]
+packages = ["simple_oauth_server"]
+
+# Hatch environments for dev workflows
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+    "requests>=2.27.1",
+    "docker>=6.0.0",
+    "fixture_foundry>=0.1.0",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest -q"
+test_cov = "pytest -q --cov=simple_oauth_server --cov-report=term-missing"
+fmt = [
+    "black .",
+    "isort .",
+]
+lint = [
+    "black --check .",
+    "isort --check-only .",
+    "mypy simple_oauth_server",
+]
+build = "hatch build"
+publish = "hatch publish"
 
 [tool.pytest.ini_options]
 markers = [

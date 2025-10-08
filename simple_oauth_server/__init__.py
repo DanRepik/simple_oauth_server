@@ -4,7 +4,6 @@ import os
 import logging
 import cloud_foundry
 from cloud_foundry import python_function, Function, RestAPI
-from simple_oauth_server.openapi_editor import OpenAPISpecEditor
 from simple_oauth_server.asymmetric_key_pair import AsymmetricKeyPair
 
 log = logging.Logger(__name__, os.environ.get("LOGGING_LEVEL", logging.DEBUG))
@@ -66,7 +65,7 @@ class SimpleOAuth:
         if not hasattr(self, "_server"):
             self._server = cloud_foundry.rest_api(
                 f"{self.name}-rest-api",
-                body=[self.validator_api_spec, self.authorizer_api_spec],
+                specification=[self.validator_api_spec, self.authorizer_api_spec],
                 integrations=[
                     {
                         "path": "/token", 
