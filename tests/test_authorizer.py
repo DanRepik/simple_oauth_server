@@ -122,6 +122,38 @@ def test_success_json_body(
     assert claims["sub"] == "client1-sub"
 
 
+def test_subject_from_roles_when_present(
+    rsa_keys: AsymmetricKeyPair,
+) -> None:
+    clients: Dict[str, Dict[str, Any]] = {
+        "client2": {
+            "client_secret": "s2",
+            "audience": "audience_2",
+            "roles": ["sales_manager", "sales_associate"],
+            "scope": "read:pets",
+        }
+    }
+    ta = TokenAuthorizer(
+        clients,
+        rsa_keys.private_key_pem,
+        "https://oauth.local/",
+    )
+    event = make_event_json(
+        {
+            "client_id": "client2",
+            "client_secret": "s2",
+            "audience": "audience_2",
+            "grant_type": "client_credentials",
+        }
+    )
+    resp = ta.handler(event, None)
+    assert resp["statusCode"] == 200
+    body = get_json_body(resp)
+    token = body["token"]
+    claims = decode_token(token, rsa_keys, audience="audience_2")
+    assert claims["sub"] == "client2"
+
+
 def test_success_basic_auth_header(
     token_authorizer_fixture: TokenAuthorizer,
     rsa_keys: AsymmetricKeyPair,

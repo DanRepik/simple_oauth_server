@@ -45,7 +45,12 @@ def _json_response(status: int, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class TokenAuthorizer:
-    def __init__(self, clients: Dict[str, Dict[str, Any]], private_key: str, issuer: str):
+    def __init__(
+        self,
+        clients: Dict[str, Dict[str, Any]],
+        private_key: str,
+        issuer: str,
+    ):
         self.clients = clients
         self.private_key = private_key
         self.issuer = issuer
@@ -74,8 +79,8 @@ class TokenAuthorizer:
         raw = self._decode_body(event)
         ctype = (
             (headers.get("content-type") or "application/json")
-        .split(";")[0]
-        .strip()
+            .split(";")[0]
+            .strip()
         )
 
         if ctype == "application/json":
@@ -93,7 +98,9 @@ class TokenAuthorizer:
         except json.JSONDecodeError:
             return {}
 
-    def _extract_basic_auth(self, headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_basic_auth(
+        self, headers: Dict[str, str]
+    ) -> Tuple[Optional[str], Optional[str]]:
         auth = headers.get("authorization")
         if not auth or not auth.lower().startswith("basic "):
             return None, None
@@ -126,7 +133,9 @@ class TokenAuthorizer:
                 400,
                 {
                     "error": "unsupported_grant_type",
-                    "error_description": "Only client_credentials is supported",
+                    "error_description": (
+                        "Only client_credentials is supported"
+                    ),
                 },
             )
 
@@ -173,15 +182,38 @@ class TokenAuthorizer:
         # Generate JWT
         try:
             now = dt.datetime.now(dt.timezone.utc)
+            # Subject should be the user id if provided; fallback to client_id
+            subject = client_data.get("sub", client_id)
+
+            # Normalize roles and groups into lists keeping original values
+            roles_any = client_data.get("roles")
+            if isinstance(roles_any, str):
+                roles = [roles_any] if roles_any else []
+            elif isinstance(roles_any, list):
+                roles = roles_any
+            else:
+                roles = []
+
+            groups_any = client_data.get("groups")
+            if isinstance(groups_any, str):
+                groups = [groups_any] if groups_any else []
+            elif isinstance(groups_any, list):
+                groups = groups_any
+            else:
+                groups = []
+
             payload: Dict[str, Any] = {
                 "iss": self.issuer,
-                "sub": client_data.get("sub", client_id),
+                "sub": subject,
                 "aud": client_data.get("audience", audience),
                 "iat": now,
                 "exp": now + dt.timedelta(hours=24),
                 "scope": client_data.get("scope", ""),
                 "permissions": client_data.get("permissions", []),
+                "roles": roles,
+                "groups": groups,
             }
+
             headers_out: Dict[str, str] = {"kid": "key-id-1"}
             token = jwt.encode(
                 payload,
@@ -206,10 +238,12 @@ class TokenAuthorizer:
         )
 
 
-def load_clients() -> Dict[str, Dict[str, Any]]: 
+def load_clients() -> Dict[str, Dict[str, Any]]:
     # Load configuration
     with open("config.yaml", "r", encoding="utf-8") as file:
-        cfg_any: Dict[str, Any] = cast(Dict[str, Any], yaml.safe_load(file) or {})
+        cfg_any: Dict[str, Any] = cast(
+            Dict[str, Any], yaml.safe_load(file) or {}
+        )
         
         clients_any: Dict[str, Any] = cast(
             Dict[str, Any], cfg_any.get("clients") or {}
@@ -226,16 +260,22 @@ def load_private_key() -> str:
         return f.read()
 
 
-authorizer: Optional[TokenAuthorizer] = None
+_authorizer_singleton: Optional[TokenAuthorizer] = None
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    global authorizer
-    if not authorizer:
+    # Lazy init without using global
+    if not isinstance(globals().get("_authorizer_singleton"), TokenAuthorizer):
         try:
             clients = load_clients()
             private_key = load_private_key()
             issuer = os.getenv("ISSUER", "https://oauth.local/")
-            authorizer = TokenAuthorizer(clients, private_key, issuer)
+            globals()["_authorizer_singleton"] = TokenAuthorizer(
+                clients, private_key, issuer
+            )
         except (FileNotFoundError, yaml.YAMLError, OSError, ValueError) as e:
             log.error("Failed to load configuration: %s", e)
             return _json_response(500, {"error": "server_error"})
-    return authorizer.handler(event, context)
+
+    instance = cast(TokenAuthorizer, globals()["_authorizer_singleton"])
+    return instance.handler(event, context)
