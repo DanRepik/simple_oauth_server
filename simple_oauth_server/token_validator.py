@@ -5,7 +5,11 @@ import json
 import re
 from typing import Any, Dict, List, Set, cast
 import jwt
-from jwt import InvalidTokenError, ExpiredSignatureError  # type: ignore
+from jwt import (
+    InvalidTokenError,
+    ExpiredSignatureError,
+    InvalidAudienceError,  # type: ignore
+)
 from cryptography.hazmat.primitives import serialization
 import logging
 
@@ -213,10 +217,15 @@ class AuthTokenValidator:
                 else list(token_aud or [])
             )
             token_auds = [str(a).strip() for a in token_auds if str(a).strip()]
-            if self.allowed_audiences and not any(
-                a in self.allowed_audiences for a in token_auds
-            ):
-                raise jwt.InvalidAudienceError("Audience not allowed")
+            # Enforce required audience for this stage (or mapped logical
+            # audience via AUDIENCE_MAPPING). Token must explicitly include it.
+            if audience and audience not in token_auds:
+                raise InvalidAudienceError("Audience mismatch for stage")
+            # Additionally, if an allowlist was derived from config.yaml,
+            # ensure at least one token audience is in that set (defense-in-depth).
+            if self.allowed_audiences:
+                if not any(a in self.allowed_audiences for a in token_auds):
+                    raise InvalidAudienceError("Audience not allowed")
             return decoded_token
         except ExpiredSignatureError:
             log.error("Token has expired.")

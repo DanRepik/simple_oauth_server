@@ -17,7 +17,7 @@ import datetime as dt
 import json
 import logging
 import os
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Dict, Optional, Tuple, cast, List, Set
 import urllib.parse
 
 import jwt
@@ -77,11 +77,18 @@ class TokenAuthorizer:
     def _parse_body(self, event: Dict[str, Any]) -> Dict[str, Any]:
         headers = self._lower_headers(event)
         raw = self._decode_body(event)
+        log.debug("headers(lowered)=%s", headers)
+        log.debug(
+            "raw_body_len=%d isBase64=%s",
+            len(raw or ""),
+            bool(event.get("isBase64Encoded")),
+        )
         ctype = (
             (headers.get("content-type") or "application/json")
             .split(";")[0]
             .strip()
         )
+        log.debug("content_type=%s", ctype)
 
         if ctype == "application/json":
             try:
@@ -116,7 +123,7 @@ class TokenAuthorizer:
 
         headers = self._lower_headers(event)
         body = self._parse_body(event)
-        log.info("Parsed body: %s", body)
+        log.info("Parsed body keys: %s", list(body.keys()))
 
         # Pull client credentials
         client_id = body.get("client_id")
@@ -124,6 +131,14 @@ class TokenAuthorizer:
         basic_id, basic_secret = self._extract_basic_auth(headers)
         client_id = client_id or basic_id
         client_secret = client_secret or basic_secret
+        cred_src = "basic" if basic_id else (
+            "body" if body.get("client_id") else "none"
+        )
+        log.debug(
+            "client_credential_source=%s client_id=%s",
+            cred_src,
+            client_id,
+        )
 
         audience_in = body.get("audience")
         grant_type = body.get("grant_type")
@@ -140,6 +155,13 @@ class TokenAuthorizer:
             )
 
         if not client_id or not client_secret or not audience_in:
+            log.warning(
+                "invalid_request missing client_id=%s client_secret=%s "
+                "audience=%s",
+                bool(client_id),
+                bool(client_secret),
+                bool(audience_in),
+            )
             return _json_response(
                 400,
                 {
@@ -152,6 +174,7 @@ class TokenAuthorizer:
 
         client_data: Optional[Dict[str, Any]] = self.clients.get(client_id)
         if not client_data:
+            log.warning("invalid_client unknown client_id=%s", client_id)
             return _json_response(
                 401,
                 {
@@ -162,6 +185,10 @@ class TokenAuthorizer:
 
         expected_secret = client_data.get("client_secret")
         if not expected_secret or expected_secret != client_secret:
+            log.warning(
+                "invalid_client bad_secret client_id=%s has_expected=%s",
+                client_id, bool(expected_secret)
+            )
             return _json_response(
                 401,
                 {
@@ -172,18 +199,35 @@ class TokenAuthorizer:
 
         # Normalize requested audience (allow string or list)
         if isinstance(audience_in, list):
-            requested_aud = str(audience_in[0] if audience_in else "").strip()
+            aud_list = cast(List[Any], audience_in)
+            requested_aud = str(aud_list[0] if aud_list else "").strip()
         else:
             requested_aud = str(audience_in).strip()
 
         # Normalize configured audiences (allow string or list in YAML)
         cfg_aud = client_data.get("audience")
+        allowed_auds: Set[str] = set()
         if isinstance(cfg_aud, list):
-            allowed_auds = {str(a).strip() for a in cfg_aud if str(a).strip()}
-        else:
-            allowed_auds = {str(cfg_aud).strip()} if cfg_aud else set()
+            for a in cast(List[Any], cfg_aud):
+                s = str(a).strip()
+                if s:
+                    allowed_auds.add(s)
+        elif cfg_aud:
+            s = str(cfg_aud).strip()
+            if s:
+                allowed_auds.add(s)
 
+        log.debug(
+            "aud_normalized requested=%s allowed=%s",
+            requested_aud,
+            sorted(list(allowed_auds)),
+        )
         if not requested_aud or requested_aud not in allowed_auds:
+            log.warning(
+                "invalid_audience requested=%s allowed=%s",
+                requested_aud,
+                sorted(list(allowed_auds)),
+            )
             return _json_response(
                 401,
                 {
@@ -200,18 +244,20 @@ class TokenAuthorizer:
 
             # Normalize roles and groups into lists keeping original values
             roles_any = client_data.get("roles")
+            roles: List[str]
             if isinstance(roles_any, str):
                 roles = [roles_any] if roles_any else []
             elif isinstance(roles_any, list):
-                roles = roles_any
+                roles = [str(x) for x in cast(List[Any], roles_any)]
             else:
                 roles = []
 
             groups_any = client_data.get("groups")
+            groups: List[str]
             if isinstance(groups_any, str):
                 groups = [groups_any] if groups_any else []
             elif isinstance(groups_any, list):
-                groups = groups_any
+                groups = [str(x) for x in cast(List[Any], groups_any)]
             else:
                 groups = []
 
@@ -227,14 +273,26 @@ class TokenAuthorizer:
                 "roles": roles,
                 "groups": groups,
             }
+            log.info(
+                "issuing token sub=%s aud=%s scope=%s perms_count=%d "
+                "roles=%d groups=%d",
+                subject,
+                requested_aud,
+                payload.get("scope", ""),
+                len(cast(List[Any], payload.get("permissions", []))),
+                len(roles),
+                len(groups),
+            )
 
             headers_out: Dict[str, str] = {"kid": "key-id-1"}
-            token = jwt.encode(
+            token_obj = jwt.encode(
                 payload,
                 self.private_key,
                 algorithm="RS256",
                 headers=headers_out,
             )
+            # PyJWT >=2 returns str; older versions may return bytes. Coerce.
+            token = str(token_obj)
         except (FileNotFoundError, OSError) as e:
             log.error("Failed to read private key: %s", e)
             return _json_response(500, {"error": "server_error"})
