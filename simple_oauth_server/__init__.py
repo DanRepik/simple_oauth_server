@@ -14,9 +14,10 @@ class SimpleOAuth:
     _autorizer: Function
     _server: RestAPI
 
-    def __init__(self, name: str, config: str):
+    def __init__(self, name: str, config: str, environment: dict = None):
         self.name = name
         self.config = config
+        self.environment = environment or {}
         self.asymmetic_key_pair = AsymmetricKeyPair()
 
     def validator(self) -> Function:
@@ -30,6 +31,7 @@ class SimpleOAuth:
                     "public_key.pem": self.asymmetic_key_pair.public_key_pem,
                 },
                 requirements=["requests==2.27.1", "PyJWT", "cryptography"],
+                environment=self.environment,
             )
         return self._validator
 

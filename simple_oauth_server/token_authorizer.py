@@ -125,7 +125,7 @@ class TokenAuthorizer:
         client_id = client_id or basic_id
         client_secret = client_secret or basic_secret
 
-        audience = body.get("audience")
+        audience_in = body.get("audience")
         grant_type = body.get("grant_type")
 
         if grant_type != "client_credentials":
@@ -139,7 +139,7 @@ class TokenAuthorizer:
                 },
             )
 
-        if not client_id or not client_secret or not audience:
+        if not client_id or not client_secret or not audience_in:
             return _json_response(
                 400,
                 {
@@ -170,7 +170,20 @@ class TokenAuthorizer:
                 },
             )
 
-        if audience != client_data.get("audience"):
+        # Normalize requested audience (allow string or list)
+        if isinstance(audience_in, list):
+            requested_aud = str(audience_in[0] if audience_in else "").strip()
+        else:
+            requested_aud = str(audience_in).strip()
+
+        # Normalize configured audiences (allow string or list in YAML)
+        cfg_aud = client_data.get("audience")
+        if isinstance(cfg_aud, list):
+            allowed_auds = {str(a).strip() for a in cfg_aud if str(a).strip()}
+        else:
+            allowed_auds = {str(cfg_aud).strip()} if cfg_aud else set()
+
+        if not requested_aud or requested_aud not in allowed_auds:
             return _json_response(
                 401,
                 {
@@ -205,7 +218,8 @@ class TokenAuthorizer:
             payload: Dict[str, Any] = {
                 "iss": self.issuer,
                 "sub": subject,
-                "aud": client_data.get("audience", audience),
+                # Use the specific requested audience that was validated
+                "aud": requested_aud,
                 "iat": now,
                 "exp": now + dt.timedelta(hours=24),
                 "scope": client_data.get("scope", ""),

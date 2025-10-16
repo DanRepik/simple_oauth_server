@@ -3,8 +3,9 @@
 import os
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Set, cast
 import jwt
+from jwt import InvalidTokenError, ExpiredSignatureError  # type: ignore
 from cryptography.hazmat.primitives import serialization
 import logging
 
@@ -17,6 +18,7 @@ log = logging.getLogger(__name__)
 
 # Load environment variables
 AUTH_MAPPINGS = json.loads(os.getenv("AUTH0_AUTH_MAPPINGS", "{}"))
+AUDIENCE_MAPPING = json.loads(os.getenv("AUDIENCE_MAPPING", "{}"))
 DEFAULT_ARN = "arn:aws:execute-api:*:*:*/*/*"
 
 
@@ -24,6 +26,32 @@ class AuthTokenValidator:
     def __init__(self, public_key, issuer: str):
         self.public_key = public_key
         self.issuer = issuer
+        # Load allowed audiences from config.yaml
+        try:
+            import yaml  # type: ignore
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+                cfg = cast(Dict[str, Any], loaded)
+        except (FileNotFoundError, OSError, ImportError, AttributeError):
+            cfg = {}
+        clients_any = cast(Dict[str, Any], cfg.get("clients") or {})
+        clients: Dict[str, Dict[str, Any]] = cast(
+            Dict[str, Dict[str, Any]], clients_any
+        )
+        auds: set[str] = set()
+        for c in clients.values():
+            aud_val: Any = c.get("audience")
+            if isinstance(aud_val, list):
+                aud_list = cast(List[Any], aud_val)
+                for a in aud_list:
+                    s = str(a).strip()
+                    if s:
+                        auds.add(s)
+            elif aud_val is not None:
+                s = str(aud_val).strip()
+                if s:
+                    auds.add(s)
+        self.allowed_audiences = auds
 
     def handler(self, event: Dict[str, Any], _) -> Dict[str, Any]:
         """Main Lambda handler."""
@@ -38,9 +66,11 @@ class AuthTokenValidator:
                 event["methodArn"]
             )
             scope_str = str(decoded_token.get("scope", "")).strip()
-            token_scopes = set(scope_str.split()) if scope_str else set()
-            decoded_perms = set(
-                decoded_token.get("permissions", []) or []
+            token_scopes: Set[str] = (
+                set(scope_str.split()) if scope_str else set()
+            )
+            decoded_perms: Set[str] = set(
+                cast(List[str], decoded_token.get("permissions", []) or [])
             )
             action = required_scope.split(":", 1)[0]
             # Enforce scopes only if present; also allow access when
@@ -68,7 +98,7 @@ class AuthTokenValidator:
                 decoded_token,
                 "sec-websocket-protocol" in event["headers"],
             )
-        except jwt.InvalidTokenError as e:
+        except InvalidTokenError as e:
             log.error("Token validation failed: %s", e)
             return {
                 "statusCode": 401,
@@ -95,7 +125,9 @@ class AuthTokenValidator:
         # Normalize headers to lowercase
         # normalize headers; be lenient with types
         headers_any = event["headers"]
-        event["headers"] = {str(k).lower(): str(v) for k, v in headers_any.items()}
+        event["headers"] = {
+            str(k).lower(): str(v) for k, v in headers_any.items()
+        }
 
         # Check if it's a REST request (type TOKEN)
         if event.get("type") == "TOKEN":
@@ -152,24 +184,44 @@ class AuthTokenValidator:
         """Validate and decode the JWT using the PEM public key."""
         log.info("decode_token")
         log.info("method_arn: %s", event["methodArn"])
-        audience = (
+        
+        # Extract stage name
+        stage_name = (
             str(event["methodArn"]).rstrip("/").split(":")[-1].split("/")[1]
         )
-        log.info("audience: %s", audience)
+        
+        # Map stage name to logical audience if mapping exists
+        audience = AUDIENCE_MAPPING.get(stage_name, stage_name)
+        
+        log.info("stage: %s, audience: %s", stage_name, audience)
         try:
-            # Decode and verify the JWT token
+            # First decode without audience enforcement; we'll validate
+            # audience against the configured allowed set derived from
+            # config.yaml. This supports multi-audience tokens.
             decoded_token = jwt.decode(
                 token,
                 self.public_key,
                 algorithms=["RS256"],
-                audience=audience,
+                options={"verify_aud": False},
                 issuer=self.issuer,
             )
+            token_aud = decoded_token.get("aud")
+            # Normalize token audience to a list for comparison
+            token_auds = (
+                [token_aud]
+                if isinstance(token_aud, str)
+                else list(token_aud or [])
+            )
+            token_auds = [str(a).strip() for a in token_auds if str(a).strip()]
+            if self.allowed_audiences and not any(
+                a in self.allowed_audiences for a in token_auds
+            ):
+                raise jwt.InvalidAudienceError("Audience not allowed")
             return decoded_token
-        except jwt.ExpiredSignatureError:
+        except ExpiredSignatureError:
             log.error("Token has expired.")
             raise
-        except jwt.InvalidTokenError as e:
+        except InvalidTokenError as e:
             log.error("Token validation failed: %s", e)
             raise
 
