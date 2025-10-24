@@ -316,11 +316,11 @@ def load_clients() -> Dict[str, Dict[str, Any]]:
         cfg_any: Dict[str, Any] = cast(
             Dict[str, Any], yaml.safe_load(file) or {}
         )
-        
+
         clients_any: Dict[str, Any] = cast(
             Dict[str, Any], cfg_any.get("clients") or {}
         )
-        
+
         clients: Dict[str, Dict[str, Any]] = cast(
             Dict[str, Dict[str, Any]], clients_any
         )

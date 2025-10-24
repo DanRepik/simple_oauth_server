@@ -27,7 +27,7 @@ def pulumi_program(config_yaml: str):
     def program():
         oauth = simple_oauth_server.SimpleOAuth("oauth", config=config_yaml)
         # Export identifiers needed to construct the LocalStack URL
-        pulumi.export("endpoint", oauth.server().domain)  # type: ignore
+        pulumi.export("endpoint", oauth.server.domain)  # type: ignore
 
     return program
 

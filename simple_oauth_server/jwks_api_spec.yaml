@@ -1,0 +1,81 @@
+openapi: 3.0.0
+info:
+  title: JWKS API
+  description: JSON Web Key Set endpoint for JWT signature verification
+  version: 1.0.0
+paths:
+  /.well-known/jwks.json:
+    get:
+      summary: Get JSON Web Key Set
+      operationId: getJWKS
+      description: |
+        Returns the JSON Web Key Set (JWKS) containing public keys used 
+        for verifying JWT signatures. This endpoint follows RFC 7517.
+      responses:
+        '200':
+          description: Successfully retrieved JWKS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty:
+                          type: string
+                          description: Key type (RSA)
+                          example: "RSA"
+                        use:
+                          type: string
+                          description: Public key use (sig for signature)
+                          example: "sig"
+                        alg:
+                          type: string
+                          description: Algorithm (RS256)
+                          example: "RS256"
+                        kid:
+                          type: string
+                          description: Key ID
+                          example: "abc123def456"
+                        n:
+                          type: string
+                          description: RSA modulus (base64url-encoded)
+                        e:
+                          type: string
+                          description: RSA exponent (base64url-encoded)
+                          example: "AQAB"
+                      required:
+                        - kty
+                        - use
+                        - alg
+                        - kid
+                        - n
+                        - e
+                required:
+                  - keys
+              example:
+                keys:
+                  - kty: "RSA"
+                    use: "sig"
+                    alg: "RS256"
+                    kid: "abc123def456"
+                    n: "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAF..."
+                    e: "AQAB"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "server_error"
+                  error_description:
+                    type: string
+                    example: "Internal server error"
+components:
+  schemas: {}

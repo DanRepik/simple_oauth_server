@@ -118,6 +118,40 @@ curl --request POST \
 
 This token can be used to authenticate subsequent API requests.
 
+### JWKS Endpoint (Public Key Discovery)
+
+The server provides a JSON Web Key Set (JWKS) endpoint at `/.well-known/jwks.json` following RFC 7517. This endpoint allows JWT token validators to automatically discover the public keys needed to verify token signatures.
+
+#### Example Request:
+
+```bash
+curl --request GET \
+  --url https://your-oauth-server/.well-known/jwks.json
+```
+
+#### Example Response:
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "abc123def456",
+      "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAF...",
+      "e": "AQAB"
+    }
+  ]
+}
+```
+
+The JWKS endpoint:
+- Returns RSA public keys in JWK format for signature verification
+- Includes a `kid` (key ID) for key identification
+- Supports CORS for browser-based applications
+- Uses appropriate caching headers (1 hour TTL)
+
 ### Validation
 
 The validation service can be integrated with **AWS API Gateway** as an authorizer to validate incoming requests using the bearer token. It supports:
@@ -159,10 +193,105 @@ def validate_token(token):
     )
 ```
 
+### Token Decoder Decorator
+
+Use @token_decoder() on a Lambda handler when you want the function itself to extract, validate, and decode a bearer token (i.e., when no upstream authorizer is present). The decorator:
+
+- Extracts the token from Authorization: Bearer headers
+- Verifies signature and claims (iss, aud, exp) using a JWKS endpoint or the local public key
+- Handles JWKS fetching, caching, and key rotation
+- Returns appropriate HTTP error responses on failure (invalid/expired/insufficient token)
+- Injects the validated JWT claims as a keyword argument (decoded_token) into your handler
+
+Configuration options:
+- `jwks_url`: **Required** - URL to /.well-known/jwks.json endpoint for public key fetching
+- `audience`: **Optional** - expected audience (`aud`) claim; if omitted, audience validation is skipped
+- `issuer`: **Optional** - expected issuer (`iss`) claim; if omitted, issuer validation is skipped  
+- `algorithms`: **Optional** - list of allowed algorithms (defaults to `["RS256"]`)
+
+See the example below for typical usage; adjust the decorator parameters to match your deployment and JWKS configuration.
+
+```python
+from simple_oauth_server.token_decoder import token_decoder
+
+@token_decoder()
+def my_lambda_handler(event, context):
+    # JWT claims are available in event['requestContext']['authorizer']
+    authorizer = event.get('requestContext', {}).get('authorizer', {})
+    user_id = authorizer.get('sub', 'unknown')
+    scopes = authorizer.get('scope', '').split() if authorizer.get('scope') else []
+    permissions = authorizer.get('permissions', [])
+    
+    return {
+        'statusCode': 200,
+        'body': json.dumps({
+            'message': f'Hello {user_id}',
+            'scopes': scopes,
+            'permissions': permissions
+        })
+    }
+```
+
+The decorator:
+- Automatically extracts tokens from `Authorization: Bearer` headers
+- Validates JWT signatures using the configured JWKS endpoint
+- **Always validates**: signature, expiration (`exp`), and token structure
+- **Conditionally validates**: audience (`aud`) and issuer (`iss`) only if configured
+- Handles JWKS key rotation and caching
+- **Provides JWT claims**: Claims populated in `event['requestContext']['authorizer']`
+- Returns appropriate HTTP error responses for invalid tokens
+
+#### Configuration Options:
+
+**Required Parameter:**
+- `jwks_url`: JWKS endpoint URL for fetching public keys (e.g., `"https://your-oauth-server/.well-known/jwks.json"`)
+
+**Optional Parameters:**
+- `audience`: Expected audience claim (`aud`). If omitted, audience validation is skipped
+- `issuer`: Expected issuer claim (`iss`). If omitted, issuer validation is skipped
+- `algorithms`: List of allowed signing algorithms (defaults to `["RS256"]`)
+
+**Examples:**
+
+```python
+# Minimal configuration - only signature validation
+@token_decoder(jwks_url="https://your-oauth-server/.well-known/jwks.json")
+def handler(event, context):
+    # JWT claims are available in event['requestContext']['authorizer']
+    authorizer = event.get('requestContext', {}).get('authorizer', {})
+    user_id = authorizer.get('sub', 'unknown')
+    return {'statusCode': 200, 'body': f'Hello {user_id}'}
+
+# Signature + audience validation
+@token_decoder(
+    jwks_url="https://your-oauth-server/.well-known/jwks.json",
+    audience="test-api"
+)
+def handler(event, context):
+    # JWT claims are available in event['requestContext']['authorizer']
+    authorizer = event.get('requestContext', {}).get('authorizer', {})
+    user_id = authorizer.get('sub', 'unknown')
+    return {'statusCode': 200, 'body': f'Hello {user_id}'}
+
+# Full validation
+@token_decoder(
+    jwks_url="https://your-oauth-server/.well-known/jwks.json",
+    audience="test-api",
+    issuer="https://oauth.local/",
+    algorithms=["RS256"]
+)
+def handler(event, context):
+    # JWT claims are available in event['requestContext']['authorizer']
+    authorizer = event.get('requestContext', {}).get('authorizer', {})
+    user_id = authorizer.get('sub', 'unknown')
+    return {'statusCode': 200, 'body': f'Hello {user_id}'}
+```
+
 ### Lambda handlers
 
 - Token issuance: `simple_oauth_server/token_authorizer.py::handler`
 - Token validation (authorizer): `simple_oauth_server/token_validator.py::handler`
+- JWKS endpoint: `simple_oauth_server/jwks_handler.py::handler`
 
 ## Claims and authorizer context at a glance
 
@@ -301,4 +430,68 @@ Set `AUTH0_AUTH_MAPPINGS` to a JSON object that maps a permission in the token t
   ]
 }
 ```
+
+## Development and Testing
+
+### Running Tests
+
+The project uses pytest for testing with a dedicated test environment configuration:
+
+```bash
+# Install test dependencies and run tests
+hatch run test:pytest
+
+# Run tests with coverage
+hatch run test:pytest --cov=simple_oauth_server
+
+# Run specific test files
+hatch run test:pytest tests/test_authorizer.py
+hatch run test:pytest tests/test_validator.py
+hatch run test:pytest tests/test_scopes.py
+```
+
+### Test Environment
+
+The project uses Hatch for environment management with a dedicated test environment that includes:
+
+- `pytest` for test running and fixtures
+- `pytest-cov` for coverage reporting  
+- `requests` for HTTP client testing
+- All production dependencies
+
+The pytest configuration automatically:
+- Excludes third-party code in `temp/` directory from test collection
+- Focuses test discovery on the `tests/` directory
+- Uses the `AsymmetricKeyPair` utility for generating ephemeral RSA keys in tests
+
+### Key Test Coverage
+
+- **Token Issuance** (`tests/test_authorizer.py`): Client authentication, token generation, Basic auth support
+- **Token Validation** (`tests/test_validator.py`): JWT validation, policy generation, API Gateway integration
+- **Scope Enforcement** (`tests/test_scopes.py`): Exact scope matching, wildcard scopes, insufficient scope handling
+- **JWKS Functionality** (`tests/test_jwks_handler.py`): Public key exposure, JWK format compliance, caching
+- **Token Decoder** (`tests/test_token_decoder.py`): Decorator functionality, JWKS integration, error handling
+
+### Local Development
+
+For local development and testing:
+
+1. **Generate RSA Keys**: Use the `AsymmetricKeyPair` utility or generate manually:
+   ```bash
+   # Generate private key
+   openssl genrsa -out private_key.pem 2048
+   
+   # Extract public key
+   openssl rsa -in private_key.pem -pubout -out public_key.pem
+   ```
+
+2. **Create Test Configuration**: Use the YAML format shown in the setup examples
+
+3. **Set Environment Variables**:
+   ```bash
+   export ISSUER="https://oauth.local/"
+   export AUTH0_AUTH_MAPPINGS='{"read:pets": [{"method": "GET", "resourcePath": "/pets"}]}'
+   ```
+
+4. **Run with LocalStack**: The project includes LocalStack integration for testing AWS Lambda deployment locally
 

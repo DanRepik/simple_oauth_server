@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simple-oauth-server"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
     { name="Daniel Repik", email="danrepik@icloud.com" },
 ]
@@ -71,8 +71,24 @@ lint = [
 build = "hatch build"
 publish = "hatch publish"
 
+# Test environment specifically for running tests
+[tool.hatch.envs.test]
+dependencies = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0.0",
+    "requests>=2.27.1",
+    "docker>=6.0.0",
+    "fixture_foundry>=0.1.0",
+]
+
+[tool.hatch.envs.test.scripts]
+run = "pytest -q"
+cov = "pytest -q --cov=simple_oauth_server --cov-report=term-missing"
+
 [tool.pytest.ini_options]
 markers = [
     "unit: marks tests as unit tests that do not require a database",
     "integration: marks tests that operate on a real database",
 ]
+norecursedirs = ["temp", "volume", ".git", "__pycache__", "*.egg-info"]
+testpaths = ["tests"]

@@ -12,7 +12,15 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
   - Enforces scopes (with wildcards) OR permissions
   - Builds IAM policy from `AUTH0_AUTH_MAPPINGS`
   - Returns `principalId=sub` and context for backends
-- Keys: `public_key.pem` for validator; `private_key.pem` for issuer
+- JWKS Handler: `simple_oauth_server/jwks_handler.py`
+  - Exposes public keys at `/.well-known/jwks.json` (RFC 7517)
+  - Converts RSA public key to JWK format with key ID (`kid`)
+  - Supports CORS and caching headers (1 hour TTL)
+- Token Decoder: `simple_oauth_server/token_decoder.py`
+  - `@token_decoder()` decorator for Lambda functions
+  - Automatic JWT validation with JWKS key fetching and caching
+  - Flexible configuration (JWKS URL, audience, issuer, algorithms)
+- Keys: `public_key.pem` for validator/JWKS; `private_key.pem` for issuer
 
 ## Claims and Context
 - Issued token claims:
@@ -46,22 +54,33 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
 
 ## Tests
 - Test suite under `tests/` uses `AsymmetricKeyPair` for ephemeral keys
+- Hatch test environment with isolated dependencies (pytest, pytest-cov, requests)
 - Key tests:
   - `test_authorizer.py` — token issuance, basic auth, subject behavior
   - `test_validator.py` — policy building, ws/rest flows, error paths
   - `test_scopes.py` — scope exact/wildcard and insufficient scope
-- Run: `pytest -q`
+  - `test_jwks_handler.py` — JWKS endpoint, JWK format, caching, CORS
+  - `test_token_decoder.py` — decorator functionality, JWKS integration, error handling
+- Pytest config excludes `temp/` directory and focuses on `tests/`
+- Run: `hatch run test:pytest` or `pytest -q` (if dependencies installed)
 
 ## Coding Guidance
 - Keep token field names stable: `token`, `token_type`, `expires_in`
 - Authorizer context must be strings; JSON-encode arrays
+- JWKS endpoint must follow RFC 7517 format with proper `kid` values
+- Token decoder should handle JWKS caching and key rotation gracefully
+- Use Hatch environments for dependency isolation: `hatch run test:pytest`
 - For new features, update README and add unit tests covering:
   - token claims shape
   - authorizer context shape
   - scope/permission allow/deny cases
+  - JWKS format compliance and caching behavior
 
 ## Common Pitfalls
 - Wrong `audience`: validator derives `aud` from methodArn (`/stage`) and will 401
 - Missing `ISSUER`: ensure issuer matches both issuer env and token claim
 - API Gateway TOKEN authorizer only returns strings in `context`
+- JWKS caching: respect TTL headers and handle key rotation properly
+- Test isolation: use `hatch run test:pytest` to avoid dependency conflicts
+- URI schemes: ensure `pkg://` schemes are properly formatted (no extra colons)
 

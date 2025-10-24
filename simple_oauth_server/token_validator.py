@@ -44,7 +44,7 @@ class AuthTokenValidator:
         )
         auds: set[str] = set()
         for c in clients.values():
-            aud_val: Any = c.get("audience")
+            aud_val: Any = os.environ.get("AUDIENCE", "https://oauth.local")
             if isinstance(aud_val, list):
                 aud_list = cast(List[Any], aud_val)
                 for a in aud_list:

@@ -34,7 +34,7 @@ def token_authorizer_fixture(
     return TokenAuthorizer(
         clients=clients,
         private_key=rsa_keys.private_key_pem,
-        issuer="https://oauth.local/",
+        issuer="https://oauth.local/"
     )
 
 
@@ -136,7 +136,7 @@ def test_subject_from_roles_when_present(
     ta = TokenAuthorizer(
         clients,
         rsa_keys.private_key_pem,
-        "https://oauth.local/",
+        "https://oauth.local/"
     )
     event = make_event_json(
         {
