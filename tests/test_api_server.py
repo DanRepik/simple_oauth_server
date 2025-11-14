@@ -25,7 +25,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pulumi_program(config_yaml: str):
     def program():
-        oauth = simple_oauth_server.SimpleOAuth("oauth", config=config_yaml)
+        oauth = simple_oauth_server.SimpleOAuth(
+            "oauth", config=config_yaml, audience="test-api"
+        )
         # Export identifiers needed to construct the LocalStack URL
         pulumi.export("endpoint", oauth.server.domain)  # type: ignore
 

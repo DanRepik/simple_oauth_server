@@ -15,14 +15,23 @@ class SimpleOAuth:
     _jwks_handler: Function
     _server: RestAPI
 
-    def __init__(self, name: str, config: str, issuer: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        config: str,
+        issuer: Optional[str] = None,
+        audience: Optional[str] = None,
+    ):
         self.name = name
         self.config = config
         self._issuer = issuer or "https://oauth.local/"
+        self._audience = audience
         self.asymmetic_key_pair = AsymmetricKeyPair()
         self.environment: Dict[str, Union[str, Output[str]]] = {
             "ISSUER": self.issuer,
         }
+        if self._audience:
+            self.environment["AUDIENCE"] = self._audience
 
     @property
     def issuer(self) -> str:
@@ -125,6 +134,12 @@ class SimpleOAuth:
         return self._server
 
 
-def start(name: str, config: str, issuer: Optional[str] = None):
+def start(
+    name: str,
+    config: str,
+    issuer: Optional[str] = None,
+    audience: Optional[str] = None,
+):
     issuer = issuer or os.environ.get("ISSUER", "https://oauth.local/")
-    SimpleOAuth(name, config, issuer).server()
+    audience = audience or os.environ.get("AUDIENCE")
+    SimpleOAuth(name, config, issuer, audience).server()

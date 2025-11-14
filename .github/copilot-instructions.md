@@ -20,6 +20,12 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
   - `@token_decoder()` decorator for Lambda functions
   - Automatic JWT validation with JWKS key fetching and caching
   - Flexible configuration (JWKS URL, audience, issuer, algorithms)
+  - Optional Postgres enrichment (guarded by `AUTHZ_DB_ENABLED`) merges roles/permissions/groups
+- DB Enrichment Helper: `simple_oauth_server/utils/authz_db.py`
+  - Connects with `psycopg` (preferred) or `psycopg2` fallback
+  - Validation query (AUTHZ_SQL_VALIDATE_SUB) can fail-open or fail-closed
+  - Enrichment queries: roles, permissions, groups (only non-empty added)
+  - Caches enrichment per `(sub, tenant)` with `AUTHZ_CACHE_TTL_SECONDS`
 - Keys: `public_key.pem` for validator/JWKS; `private_key.pem` for issuer
 
 ## Claims and Context
@@ -48,9 +54,22 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
 - Clients are read from `config.yaml` with fields:
   - `client_secret` (string), `audience` (string), `sub` (user id)
   - Optional: `scope` (string), `permissions` (list), `roles` (str|list), `groups` (str|list)
+- SimpleOAuth constructor parameters:
+  - `name` (string, required): resource name prefix
+  - `config` (string, required): YAML client configuration
+  - `issuer` (string, optional): token issuer URL (defaults to `https://oauth.local/`)
+  - `audience` (string, optional): expected audience for validation (if not set, uses AUDIENCE env var or derives from methodArn stage)
 - Environment variables:
   - `ISSUER` (defaults to `https://oauth.local/`)
+  - `AUDIENCE` (optional): default audience for validator if not set via constructor
   - `AUTH0_AUTH_MAPPINGS` — JSON mapping from permission→allowed resources
+  - DB enrichment (all optional unless feature enabled):
+    - `AUTHZ_DB_ENABLED` (true|false; accepted truthy: true,1,yes,on)
+    - `AUTHZ_FAIL_MODE` (fail_closed|fail_open)
+    - `AUTHZ_CACHE_TTL_SECONDS` (int seconds, default 300)
+    - `AUTHZ_SQL_VALIDATE_SUB` (validation; may be empty)
+    - `AUTHZ_SQL_ROLES` / `AUTHZ_SQL_PERMISSIONS` / `AUTHZ_SQL_GROUPS`
+    - Postgres connection: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE`
 
 ## Tests
 - Test suite under `tests/` uses `AsymmetricKeyPair` for ephemeral keys
@@ -61,6 +80,7 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
   - `test_scopes.py` — scope exact/wildcard and insufficient scope
   - `test_jwks_handler.py` — JWKS endpoint, JWK format, caching, CORS
   - `test_token_decoder.py` — decorator functionality, JWKS integration, error handling
+  - `test_authz_db.py` — DB enrichment (disabled, missing sub, fail modes, caching, placeholders)
 - Pytest config excludes `temp/` directory and focuses on `tests/`
 - Run: `hatch run test:pytest` or `pytest -q` (if dependencies installed)
 
@@ -69,6 +89,9 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
 - Authorizer context must be strings; JSON-encode arrays
 - JWKS endpoint must follow RFC 7517 format with proper `kid` values
 - Token decoder should handle JWKS caching and key rotation gracefully
+- Enrichment must never mutate original JWT claims destructively; only add fields
+- Fail-open mode must not raise on validation/connect errors
+- Ensure placeholder substitution (`:sub`, `:tenant`) consistent with authz_db helper
 - Use Hatch environments for dependency isolation: `hatch run test:pytest`
 - For new features, update README and add unit tests covering:
   - token claims shape
@@ -77,10 +100,13 @@ Simple OAuth Server provides a minimal OAuth 2.0 style token issuer and an AWS A
   - JWKS format compliance and caching behavior
 
 ## Common Pitfalls
-- Wrong `audience`: validator derives `aud` from methodArn (`/stage`) and will 401
+- Wrong `audience`: pass explicit `audience` parameter to SimpleOAuth constructor or set AUDIENCE env var; otherwise validator derives from methodArn stage name
 - Missing `ISSUER`: ensure issuer matches both issuer env and token claim
 - API Gateway TOKEN authorizer only returns strings in `context`
 - JWKS caching: respect TTL headers and handle key rotation properly
 - Test isolation: use `hatch run test:pytest` to avoid dependency conflicts
 - URI schemes: ensure `pkg://` schemes are properly formatted (no extra colons)
+- DB enrichment enabled but drivers missing: feature safely skipped only if `AUTHZ_DB_ENABLED` false; else will raise in `fail_closed`
+- Validation query returning no rows with `fail_closed`: results in 500 (PermissionError raised)
+- Forgetting to include `sub` in claims when enrichment enabled: enrichment skipped
 

@@ -19,6 +19,13 @@ __all__ = ['token_decoder', 'generate_jwks_response']
 
 log = logging.getLogger(__name__)
 
+# Narrow import for error handling in wrapper; fallback keeps module import-safe
+try:
+    from jwt import InvalidTokenError as JWTInvalidTokenError  # type: ignore
+except Exception:  # noqa: BLE001
+    class JWTInvalidTokenError(Exception):
+        pass
+
 
 def _log_jwt_configuration():
     """Log current JWT configuration for debugging."""
@@ -111,14 +118,44 @@ def token_decoder(jwks_url: Optional[str] = None,
                 decoded_token = jwt_decoder.decode(event)
                 log.debug("JWT token successfully decoded")
 
+                # Optional DB-backed authorization enrichment
+                try:
+                    if os.getenv("AUTHZ_DB_ENABLED", "").strip().lower() in (
+                        "true",
+                        "1",
+                        "yes",
+                        "on",
+                    ):
+                        from .utils.authz_db import (
+                            enrich_authorizer_if_enabled,
+                        )
+
+                        if decoded_token is None:
+                            raise ValueError("Decoded token is None")
+                        decoded_token = enrich_authorizer_if_enabled(
+                            decoded_token
+                        )
+                except (
+                    ImportError,
+                    ValueError,
+                    RuntimeError,
+                    PermissionError,
+                ) as e:
+                    log.debug("AuthZ DB enrichment skipped/failed: %s", e)
+
                 # Populate requestContext for Lambda handler compatibility
                 if 'requestContext' not in event:
                     event['requestContext'] = {}
                 event['requestContext']['authorizer'] = decoded_token
                 return handler(event, context)
 
-            except Exception as e:
-                log.error(f"JWT filter critical error: {str(e)}")
+            except (
+                ValueError,
+                KeyError,
+                RuntimeError,
+                JWTInvalidTokenError,
+            ) as e:
+                log.error("JWT filter critical error: %s", e)
                 return {
                     'statusCode': 500,
                     'headers': {'Content-Type': 'application/json'},
@@ -129,18 +166,32 @@ def token_decoder(jwks_url: Optional[str] = None,
     return decorator
 
 class JWTDecoder:
-    def __init__(self, jwks_url: str, issuer: Optional[str] = None, allowed_audiences: Optional[set] = None, algorithms: Optional[list] = None):
-        log.debug("Initializing JWTDecoder with jwks_url: %s, issuer: %s", jwks_url, issuer)
+    def __init__(
+        self,
+        jwks_url: str,
+        issuer: Optional[str] = None,
+        allowed_audiences: Optional[set] = None,
+        algorithms: Optional[list] = None,
+    ) -> None:
+        log.debug(
+            "Initializing JWTDecoder with jwks_url: %s, issuer: %s",
+            jwks_url,
+            issuer,
+        )
         self.jwks_url = jwks_url
         self.public_key = self.fetch_public_key_from_jwks(jwks_url)
         self.issuer = issuer
         self.allowed_audiences = allowed_audiences or set()
         self.algorithms = algorithms or ["RS256"]
-        log.debug("JWTDecoder initialized with %d allowed audiences, algorithms: %s", 
-                 len(self.allowed_audiences), self.algorithms)
+        log.debug(
+            "JWTDecoder initialized with %d allowed audiences, algorithms: %s",
+            len(self.allowed_audiences),
+            self.algorithms,
+        )
 
-
-    def fetch_public_key_from_jwks(self, jwks_url: str, kid: Optional[str] = None) -> Optional[str]:
+    def fetch_public_key_from_jwks(
+        self, jwks_url: str, kid: Optional[str] = None
+    ) -> Optional[str]:
         """
         Fetch the public key from a JWKS endpoint.
 
@@ -154,7 +205,7 @@ class JWTDecoder:
         import requests
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
-        from cryptography.hazmat.backends import default_backend        
+        from cryptography.hazmat.backends import default_backend
 
         try:
             log.debug("Fetching JWKS from URL: %s", jwks_url)
@@ -183,8 +234,10 @@ class JWTDecoder:
                     log.warning("Key ID %s not found, using first key", kid)
             if not key:
                 key = keys[0]
-                log.debug("Using first available key with kid: %s", 
-                         key.get("kid", "unknown"))
+                log.debug(
+                    "Using first available key with kid: %s",
+                    key.get("kid", "unknown"),
+                )
             # Convert JWK to PEM (requires cryptography)
 
             def b64url_decode(val):
@@ -199,8 +252,13 @@ class JWTDecoder:
                 format=serialization.PublicFormat.SubjectPublicKeyInfo,
             )
             return pem.decode("utf-8")
-        except Exception as e:
-            log.error(f"Failed to fetch public key from JWKS: {e}")
+        except (
+            requests.RequestException,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as e:
+            log.error("Failed to fetch public key from JWKS: %s", e)
             return None
 
     def decode(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -218,8 +276,10 @@ class JWTDecoder:
             event.get("headers", {}).get("authorization")
         )
         
-        log.debug("Authorization header found: %s", 
-                 "Yes" if auth_header else "No")
+        log.debug(
+            "Authorization header found: %s",
+            "Yes" if auth_header else "No",
+        )
         
         if not auth_header:
             log.error("No authorization header found in event")
@@ -272,14 +332,16 @@ class JWTDecoder:
                 decode_options["verify_iss"] = False
 
             if self.allowed_audiences:
-                log.debug("Allowed audiences configured: %s", self.allowed_audiences)
-                audience = self.allowed_audiences
+                log.debug(
+                    "Allowed audiences configured: %s", self.allowed_audiences
+                )
             else:
                 log.debug("No audience validation configured")
                 decode_options["verify_aud"] = False
 
             log.debug("Decoding JWT token with PyJWT")
-            # Extract token from decode_args as it needs to be the first positional argument
+            # Extract token from decode_args as it needs to be the first
+            # positional argument
             token_arg = decode_args.pop("token")
             decoded_token = jwt.decode(token_arg, **decode_args)
             log.debug("JWT token decoded successfully")

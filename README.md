@@ -8,6 +8,7 @@ A lightweight OAuth 2.0 server deployable to AWS Lambda, designed for developmen
 - **Token Validation**: AWS API Gateway Lambda authorizer integration
 - **JWKS Endpoint**: RFC 7517 compliant public key discovery
 - **Token Decoder**: Optional JWT validation decorator for Lambda functions
+- **DB Auth Enrichment**: Optional Postgres-backed roles/permissions enrichment
 - **Automatic Key Generation**: RSA key pairs created during deployment
 - **Flexible Configuration**: YAML-based client and permission setup
 
@@ -47,8 +48,10 @@ clients:
       - "admin"
 """
 
-# Deploy OAuth server
-oauth_server = simple_oauth_server.start("oauth", config=config)
+# Deploy OAuth server with explicit audience
+oauth_server = simple_oauth_server.start(
+    "oauth", config=config, audience="my-api"
+)
 ```
 
 Deploy with Pulumi:
@@ -141,6 +144,44 @@ def my_lambda_handler(event, context):
     }
 ```
 
+#### DB Authorization Enrichment (Optional)
+
+You can enrich decoded JWT claims with roles, permissions, and groups
+from a PostgreSQL database by setting `AUTHZ_DB_ENABLED=true`.
+Enrichment runs only after successful JWT validation; if disabled, the
+decoder returns raw JWT claims.
+
+Environment variables:
+
+```bash
+export AUTHZ_DB_ENABLED=true                # Toggle feature (default: false)
+export AUTHZ_FAIL_MODE=fail_closed          # Or fail_open
+export AUTHZ_CACHE_TTL_SECONDS=300          # Per-sub/tenant cache TTL
+
+# Connection settings (standard PG env vars)
+export PGHOST=localhost
+export PGPORT=5432
+export PGDATABASE=authz
+export PGUSER=app
+export PGPASSWORD=secret
+export PGSSLMODE=prefer
+
+# SQL (use :sub and :tenant placeholders)
+export AUTHZ_SQL_VALIDATE_SUB='SELECT 1 FROM users WHERE sub = :sub'
+export AUTHZ_SQL_ROLES='SELECT role FROM user_roles WHERE sub = :sub'
+export AUTHZ_SQL_PERMISSIONS='SELECT perm FROM user_perms WHERE sub = :sub'
+export AUTHZ_SQL_GROUPS='SELECT grp FROM user_groups WHERE sub = :sub'
+```
+
+Behavior:
+- Validation query: if present and yields no row
+  - `fail_closed` -> raises PermissionError (handler returns 500)
+  - `fail_open` -> failure logged; role/permission/group queries still run
+- DB driver/connect errors: logged & skipped in `fail_open`; raise in `fail_closed`.
+- Roles / permissions / groups only merged if non-empty.
+- Cache key: `(sub, tenant)`; TTL controlled by `AUTHZ_CACHE_TTL_SECONDS`.
+- Placeholders `:sub` / `:tenant` converted to positional `%s`.
+
 ## Configuration
 
 ### Client Configuration
@@ -168,6 +209,7 @@ Configure at runtime:
 ```bash
 # Token issuer/validator settings
 export ISSUER="https://oauth.local/"
+export AUDIENCE="my-api"  # Optional: default audience for validation
 
 # Permission-to-resource mapping for IAM policies
 export AUTH0_AUTH_MAPPINGS='{
@@ -175,6 +217,10 @@ export AUTH0_AUTH_MAPPINGS='{
   "admin": [{"method": "*", "resourcePath": "*"}]
 }'
 ```
+
+DB enrichment environment variables are described in the
+[Token Decoder > DB Authorization Enrichment](#db-authorization-enrichment-optional)
+section above.
 
 ### JWT Claims
 
@@ -261,6 +307,7 @@ Uses Hatch for dependency management with dedicated test environment including:
 - pytest-cov for coverage reporting
 - requests for HTTP client testing
 - AsymmetricKeyPair utility for ephemeral test keys
+ - test_authz_db.py covers DB enrichment (disabled, missing sub, validation modes, caching)
 
 ## API Reference
 
@@ -285,3 +332,19 @@ The `simple_oauth_server.start()` function creates:
 4. IAM roles and policies for Lambda execution
 
 For complete examples and advanced configuration options, see the test files in the `tests/` directory.
+
+## Troubleshooting
+
+**500 Internal error**
+- Check JWKS host reachability and issuer/audience env vars.
+- If enrichment enabled, verify Postgres driver installed (psycopg or psycopg2).
+
+**Enrichment silently skipped**
+- Ensure `AUTHZ_DB_ENABLED` is one of: true, 1, yes, on.
+- Confirm validation query returns a row or switch to `fail_open`.
+
+**Changed roles not reflected**
+- Decrease `AUTHZ_CACHE_TTL_SECONDS` or restart service to clear cache.
+
+**Audience mismatch**
+- Provide all acceptable audiences via `JWT_ALLOWED_AUDIENCES` (comma separated).
