@@ -30,6 +30,9 @@ class AuthTokenValidator:
     def __init__(self, public_key, issuer: str):
         self.public_key = public_key
         self.issuer = issuer
+        # Store configured audience from environment
+        self.audience = os.environ.get("AUDIENCE")
+        
         # Load allowed audiences from config.yaml
         try:
             import yaml  # type: ignore
@@ -189,10 +192,20 @@ class AuthTokenValidator:
         log.info("decode_token")
         log.info("method_arn: %s", event["methodArn"])
         
-        # Extract stage name
-        stage_name = (
-            str(event["methodArn"]).rstrip("/").split(":")[-1].split("/")[1]
-        )
+        # Extract stage name from methodArn
+        # TOKEN authorizers pass "arn:aws:execute-api:*:*:*" (wildcards)
+        # REQUEST authorizers pass "arn:aws:execute-api:region:account:apiid/stage/method/resource"
+        method_arn = str(event["methodArn"]).rstrip("/")
+        arn_path = method_arn.split(":")[-1]  # Get last part after final colon
+        path_parts = arn_path.split("/")  # Split by slash
+        
+        # Stage is at index 1 if we have enough parts, otherwise use configured audience
+        if len(path_parts) >= 2 and path_parts[1] != "*":
+            stage_name = path_parts[1]
+        else:
+            # TOKEN authorizer or malformed ARN - use configured audience or default
+            stage_name = self.audience if self.audience else "default"
+            log.info("Using configured audience (TOKEN authorizer or wildcard ARN): %s", stage_name)
         
         # Map stage name to logical audience if mapping exists
         audience = AUDIENCE_MAPPING.get(stage_name, stage_name)
@@ -323,13 +336,19 @@ def handler(event: Dict[str, Any], _) -> Dict[str, Any]:
     if not isinstance(
         globals().get("authorization_handler_singleton"), AuthTokenValidator
     ):
-        # Load the public key from the PEM file
-        with open("public_key.pem", "rb") as pem_file:
-            public_key = serialization.load_pem_public_key(pem_file.read())
-            issuer = os.getenv("ISSUER", "https://oauth.local/")
-            globals()["authorization_handler_singleton"] = AuthTokenValidator(
-                public_key, issuer
-            )
+        # Load the public key - try environment variable first (for secrets manager)
+        env_key_pem = os.getenv("PUBLIC_KEY_PEM")
+        if env_key_pem:
+            public_key = serialization.load_pem_public_key(env_key_pem.encode('utf-8'))
+        else:
+            # Fall back to file-based key
+            with open("public_key.pem", "rb") as pem_file:
+                public_key = serialization.load_pem_public_key(pem_file.read())
+        
+        issuer = os.getenv("ISSUER", "https://oauth.local/")
+        globals()["authorization_handler_singleton"] = AuthTokenValidator(
+            public_key, issuer
+        )
 
     instance = globals()["authorization_handler_singleton"]
     assert isinstance(instance, AuthTokenValidator)

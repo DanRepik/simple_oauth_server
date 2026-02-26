@@ -22,6 +22,7 @@ import urllib.parse
 
 import jwt
 import yaml
+import importlib
 
 
 logging.basicConfig(
@@ -50,10 +51,12 @@ class TokenAuthorizer:
         clients: Dict[str, Dict[str, Any]],
         private_key: str,
         issuer: str,
+        use_db_clients: bool = False,
     ):
         self.clients = clients
         self.private_key = private_key
         self.issuer = issuer
+        self.use_db_clients = use_db_clients
 
     def _lower_headers(self, event: Dict[str, Any]) -> Dict[str, str]:
         raw_headers: Any = event.get("headers") or {}
@@ -172,7 +175,15 @@ class TokenAuthorizer:
                 },
             )
 
-        client_data: Optional[Dict[str, Any]] = self.clients.get(client_id)
+        client_data: Optional[Dict[str, Any]]
+        if self.use_db_clients:
+            # Lazy import to avoid packaging/lint issues in non-DB mode
+            mod = importlib.import_module(
+                "simple_oauth_server.utils.client_store"
+            )
+            client_data = getattr(mod, "get_client_from_db")(client_id) or None
+        else:
+            client_data = self.clients.get(client_id)
         if not client_data:
             log.warning("invalid_client unknown client_id=%s", client_id)
             return _json_response(
@@ -183,8 +194,13 @@ class TokenAuthorizer:
                 },
             )
 
+        # Validate client_secret (plaintext for dev/CI)
         expected_secret = client_data.get("client_secret")
-        if not expected_secret or expected_secret != client_secret:
+        ok_secret = bool(
+            expected_secret and expected_secret == client_secret
+        )
+
+        if not ok_secret:
             log.warning(
                 "invalid_client bad_secret client_id=%s has_expected=%s",
                 client_id, bool(expected_secret)
@@ -328,6 +344,12 @@ def load_clients() -> Dict[str, Dict[str, Any]]:
 
 
 def load_private_key() -> str:
+    # Try to load from environment variable first (for secrets manager integration)
+    env_key = os.getenv("PRIVATE_KEY_PEM")
+    if env_key:
+        return env_key
+    
+    # Fall back to file-based key
     with open("private_key.pem", "r", encoding="utf-8") as f:
         return f.read()
 
@@ -339,11 +361,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Lazy init without using global
     if not isinstance(globals().get("_authorizer_singleton"), TokenAuthorizer):
         try:
-            clients = load_clients()
+            # Use DB-backed clients if enabled; else load from config.yaml
+            # Check DB mode lazily to avoid hard import dependency
+            try:
+                mod = importlib.import_module(
+                    "simple_oauth_server.utils.client_store"
+                )
+                use_db = bool(getattr(mod, "db_clients_enabled")())
+            except (ImportError, AttributeError, ModuleNotFoundError):
+                use_db = False
+            clients = {} if use_db else load_clients()
             private_key = load_private_key()
             issuer = os.getenv("ISSUER", "https://oauth.local/")
             globals()["_authorizer_singleton"] = TokenAuthorizer(
-                clients, private_key, issuer
+                clients, private_key, issuer, use_db_clients=use_db
             )
         except (FileNotFoundError, yaml.YAMLError, OSError, ValueError) as e:
             log.error("Failed to load configuration: %s", e)

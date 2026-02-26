@@ -142,7 +142,13 @@ class JWKSHandler:
 
 
 def load_public_key() -> str:
-    """Load public key from file."""
+    """Load public key from environment or file."""
+    # Try environment variable first (for secrets manager integration)
+    env_key = os.getenv("PUBLIC_KEY_PEM")
+    if env_key:
+        return env_key
+    
+    # Fall back to file-based key
     with open("public_key.pem", "r", encoding="utf-8") as f:
         return f.read()
 
