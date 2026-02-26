@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.0"]
+requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "simple-oauth-server"
-version = "0.1.5"
+dynamic = ["version"]
 authors = [
     { name="Daniel Repik", email="danrepik@icloud.com" },
 ]
@@ -40,6 +40,10 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["simple_oauth_server"]
+
+[tool.hatch.version]
+source = "regex"
+path = "simple_oauth_server/_version.py"
 
 # Hatch environments for dev workflows
 [tool.hatch.envs.default]
